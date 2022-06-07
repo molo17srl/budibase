@@ -1,6 +1,7 @@
 const postgres = require("./postgres")
 const dynamodb = require("./dynamodb")
 const mongodb = require("./mongodb")
+const couchbase = require("./couchbase")
 const elasticsearch = require("./elasticsearch")
 const couchdb = require("./couchdb")
 const sqlServer = require("./microsoftSqlServer")
@@ -20,6 +21,7 @@ const DEFINITIONS = {
   [SourceNames.POSTGRES]: postgres.schema,
   [SourceNames.DYNAMODB]: dynamodb.schema,
   [SourceNames.MONGODB]: mongodb.schema,
+  [SourceNames.COUCHBASE]: couchbase.schema,
   [SourceNames.ELASTICSEARCH]: elasticsearch.schema,
   [SourceNames.COUCHDB]: couchdb.schema,
   [SourceNames.SQL_SERVER]: sqlServer.schema,
@@ -37,6 +39,7 @@ const INTEGRATIONS = {
   [SourceNames.POSTGRES]: postgres.integration,
   [SourceNames.DYNAMODB]: dynamodb.integration,
   [SourceNames.MONGODB]: mongodb.integration,
+  [SourceNames.COUCHBASE]: couchbase.integration,
   [SourceNames.ELASTICSEARCH]: elasticsearch.integration,
   [SourceNames.COUCHDB]: couchdb.integration,
   [SourceNames.SQL_SERVER]: sqlServer.integration,
