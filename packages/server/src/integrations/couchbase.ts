@@ -11,10 +11,11 @@ import { getSqlQuery } from "./utils"
 
 const environment = require("../environment")
 const retryErrorCodes = ["107", "100", "170", "201"]
+const defaultMaxRetries = 3
 
 module CouchbaseModule {
   interface CouchbaseConfig {
-    certpathParam: string
+    certificatePath: string
     username: string
     password: string
     bucketName: string
@@ -29,6 +30,15 @@ module CouchbaseModule {
     description:
       "Couchbase Server is an open-source distributed (shared-nothing architecture) multi-model NoSQL document-oriented database",
     datasource: {
+      username: {
+        type: DatasourceFieldTypes.STRING,
+        required: true,
+        default: "admin",
+      },
+      password: {
+        type: DatasourceFieldTypes.PASSWORD,
+        required: true,
+      },
       connectionString: {
         type: DatasourceFieldTypes.STRING,
         required: true,
@@ -38,20 +48,9 @@ module CouchbaseModule {
         type: DatasourceFieldTypes.STRING,
         required: true,
       },
-      isSecure: {
-        type: DatasourceFieldTypes.BOOLEAN,
-        required: false,
-        default: false,
-      },
-      certpathParam: {
+      certificatePath: {
         type: DatasourceFieldTypes.STRING,
         required: false,
-        default: "",
-      },
-      maxRetries: {
-        type: DatasourceFieldTypes.NUMBER,
-        require: false,
-        default: 3,
       },
     },
     query: {
@@ -81,8 +80,9 @@ module CouchbaseModule {
         username: this.config.username,
         password: this.config.password,
         security: {
-          trustStorePath: this.config.certpathParam,
+          trustStorePath: this.config.certificatePath,
         },
+        maxRetries: defaultMaxRetries,
       })
 
       this.cluster.bucket(this.config.bucketName)
