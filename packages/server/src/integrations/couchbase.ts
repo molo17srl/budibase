@@ -9,11 +9,12 @@ import { Cluster, QueryOptions, QueryResult } from "couchbase"
 import { datasourceValidator } from "../api/routes/utils/validators"
 import { getSqlQuery } from "./utils"
 
-const environment = require("../environment")
-const retryErrorCodes = ["107", "100", "170", "201"]
-const defaultMaxRetries = 3
-
 module CouchbaseModule {
+  const couchbase = require("couchbase")
+  const environment = require("../environment")
+  const retryErrorCodes = ["107", "100", "170", "201"]
+  const defaultMaxRetries = 3
+
   interface CouchbaseConfig {
     certificatePath: string
     username: string
@@ -33,7 +34,7 @@ module CouchbaseModule {
       username: {
         type: DatasourceFieldTypes.STRING,
         required: true,
-        default: "admin",
+        default: "Administrator",
       },
       password: {
         type: DatasourceFieldTypes.PASSWORD,
