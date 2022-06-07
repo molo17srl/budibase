@@ -9,6 +9,7 @@ import { Cluster, QueryOptions, QueryResult } from "couchbase"
 import { datasourceValidator } from "../api/routes/utils/validators"
 import { getSqlQuery } from "./utils"
 
+const environment = require("../environment")
 const retryErrorCodes = ["107", "100", "170", "201"]
 
 module CouchbaseModule {
@@ -85,6 +86,14 @@ module CouchbaseModule {
       })
 
       this.cluster.bucket(this.config.bucketName)
+
+      // This primary index is meant only to be used for DEV and TEST purposes, should not be used in Production
+      if (environment.isTest()) {
+        const query: SqlQuery = {
+          sql: `CREATE PRIMARY INDEX primay_index_test_environment ON ${this.config.bucketName}`,
+        }
+        this.internalQuery(query, this.config.maxRetries)
+      }
     }
 
     async connect() {
