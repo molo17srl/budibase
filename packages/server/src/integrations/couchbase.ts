@@ -5,13 +5,20 @@ import {
   SqlQuery,
 } from "../definitions/datasource"
 import { IntegrationBase } from "./base/IntegrationBase"
-import { Cluster, QueryOptions, QueryResult } from "couchbase"
-import { datasourceValidator } from "../api/routes/utils/validators"
 import { getSqlQuery } from "./utils"
+import {
+  Cluster,
+  connect,
+  Bucket,
+  Collection,
+  QueryErrorContext,
+  QueryResult,
+  GetResult,
+  MutationResult,
+} from "couchbase"
+import { result } from "lodash"
 
 module CouchbaseModule {
-  const couchbase = require("couchbase")
-  const environment = require("../environment")
   const retryErrorCodes = ["107", "100", "170", "201"]
   const defaultMaxRetries = 3
 
@@ -55,86 +62,67 @@ module CouchbaseModule {
       },
     },
     query: {
-      create: {
-        type: QueryTypes.SQL,
-      },
       read: {
         type: QueryTypes.SQL,
       },
-      update: {
-        type: QueryTypes.SQL,
+      insert: {
+        type: QueryTypes.FIELDS,
+        fields: {
+          key: {
+            type: DatasourceFieldTypes.STRING,
+            required: true,
+          },
+          value: {
+            type: DatasourceFieldTypes.STRING,
+            required: true,
+          },
+        },
       },
       delete: {
-        type: QueryTypes.SQL,
+        type: QueryTypes.FIELDS,
+        fields: {
+          id: {
+            type: DatasourceFieldTypes.STRING,
+            required: true,
+          },
+        },
+      },
+      get: {
+        type: QueryTypes.FIELDS,
+        fields: {
+          id: DatasourceFieldTypes.STRING,
+        },
       },
     },
   }
 
   class CouchbaseIntegration implements IntegrationBase {
     private config: CouchbaseConfig
-    private cluster: Cluster
+    private cluster: Cluster | null = null
+    private bucket: Bucket | null = null
 
     constructor(config: CouchbaseConfig) {
       this.config = config
+    }
 
-      this.cluster = couchbase.connect(config.connectionString, {
+    async connect() {
+      this.cluster = await connect(this.config.connectionString, {
         username: this.config.username,
         password: this.config.password,
         security: {
           trustStorePath: this.config.certificatePath,
         },
-        maxRetries: defaultMaxRetries,
       })
 
-      this.cluster.bucket(this.config.bucketName)
+      this.bucket = this.cluster.bucket(this.config.bucketName)
 
-      // This primary index is meant only to be used for DEV and TEST purposes, should not be used in Production
-      if (environment.isTest()) {
-        const query: SqlQuery = {
-          sql: `CREATE PRIMARY INDEX primay_index_test_environment ON ${this.config.bucketName}`,
-        }
-        this.internalQuery(query, this.config.maxRetries)
-      }
+      return this.bucket
     }
 
-    async connect() {
-      return await this.cluster
-    }
-
-    // TO-DO: verify if needed
-    // createObjectIds(json: any): object {
-    //   const self = this
-    //   function interpolateObjectIds(json: any) {
-    //     for (let field of Object.keys(json)) {
-    //       if (json[field] instanceof Object) {
-    //         json[field] = self.createObjectIds(json[field])
-    //       }
-    //       if (field === "_id" && typeof json[field] === "string") {
-    //         const id = json["_id"].match(
-    //           /(?<=objectid\(['"]).*(?=['"]\))/gi
-    //         )?.[0]
-    //         if (id) {
-    //           json["_id"] = ObjectID.createFromHexString(id)
-    //         }
-    //       }
-    //     }
-    //     return json
-    //   }
-    //
-    //   if (Array.isArray(json)) {
-    //     for (let i = 0; i < json.length; i++) {
-    //       json[i] = interpolateObjectIds(json[i])
-    //     }
-    //     return json
-    //   }
-    //   return interpolateObjectIds(json)
-    // }
-
-    async internalQuery(query: SqlQuery, retry: number): Promise<any> {
-      const client = this.cluster
-
+    async internalQuery(query: SqlQuery, retry: number): Promise<QueryResult> {
+      const bucket = await this.connect()
       try {
-        return await this.cluster.query(query.sql)
+        return await bucket.cluster.query(query.sql)
       } catch (err) {
         let message
         let code
@@ -161,55 +149,94 @@ module CouchbaseModule {
       }
     }
 
+    async internalKeyValueStatement(
+      key: string,
+      value: any,
+      deletion: boolean,
+      retry: number
+    ): Promise<any> {
+      const bucket = await this.connect()
+
+      try {
+        if (!deletion) {
+          if (!value) {
+            return await bucket.defaultCollection().get(key)
+          } else {
+            return await bucket.defaultCollection().upsert(key, value)
+          }
+        } else {
+          return await bucket.defaultCollection().remove(key)
+        }
+      } catch (err) {
+        let message
+        let code
+        if (err instanceof Error) message = err.message
+        else message = String(err)
+
+        if (
+          retryErrorCodes.includes(message) ||
+          message == "parent cluster object has been closed"
+        ) {
+          this.connect()
+          if (retry <= 0) {
+            console.error(err)
+            throw new Error("Couchbase max retries exceeded")
+          }
+          return await this.internalKeyValueStatement(
+            key,
+            value,
+            deletion,
+            retry ? retry - 1 : this.config.maxRetries
+          )
+        } else {
+          console.log("Unexpected error", err)
+          throw err
+        }
+      }
+    }
+
     async read(query: SqlQuery | string) {
       await this.connect()
-      const response = await this.internalQuery(
+      const queryResult = await this.internalQuery(
         getSqlQuery(query),
         this.config.maxRetries
       )
-      return response.recordset
+      return queryResult.rows
     }
 
-    async create(query: SqlQuery | string) {
+    async insert(query: { id: string; value: any }) {
       await this.connect()
-      const response = await this.internalQuery(
-        getSqlQuery(query),
+      const result = await this.internalKeyValueStatement(
+        query.id,
+        query.value,
+        false,
         this.config.maxRetries
       )
-      return response.recordset || [{ created: true }]
+      return result as MutationResult
     }
 
-    async update(query: SqlQuery | string) {
+    async delete(query: { id: string }) {
       await this.connect()
-      const response = await this.internalQuery(
-        getSqlQuery(query),
+      const result = await this.internalKeyValueStatement(
+        query.id,
+        null,
+        true,
         this.config.maxRetries
       )
-      return response.recordset || [{ updated: true }]
+      return result as MutationResult
     }
 
-    async delete(query: SqlQuery | string) {
+    async get(query: { id: string }) {
       await this.connect()
-      const response = await this.internalQuery(
-        getSqlQuery(query),
+      const result = await this.internalKeyValueStatement(
+        query.id,
+        null,
+        false,
         this.config.maxRetries
       )
-      return response.recordset || [{ deleted: true }]
-    }
 
-    // TO-DO: verify if needed
-    // async query(json: QueryJson) {
-    //   const schema = this.config.schema
-    //   await this.connect()
-    //   if (schema && schema !== DEFAULT_SCHEMA && json?.endpoint) {
-    //     json.endpoint.schema = schema
-    //   }
-    //   const operation = this._operation(json)
-    //   const queryFn = (query: any, op: string) => this.internalQuery(query, op)
-    //   const processFn = (result: any) =>
-    //     result.recordset ? result.recordset : [{ [operation]: true }]
-    //   return this.queryWithReturning(json, queryFn, processFn)
-    // }
+      return (result as GetResult).content
+    }
   }
 
   module.exports = {
